@@ -1,4 +1,3 @@
-import numpy as np
 from dataclasses import dataclass, asdict
 from typing import Literal
 from typing import Optional
@@ -146,14 +145,45 @@ def compute_sub_attention_mask(config, attention_mask):
 def compute_span_masking(
     shape,
     mask_prob=0.065,
-    mask_lenght=10,
+    mask_length=10,
     min_masks=2,
-    attention_mask=None,
+    sub_attention_mask=None,
     p_replace=0.8 
     ):
     """Mask a set of encoded features and it's adjecent features, which we later try to predict as a form of pretraining
     """
     batch_size, max_features_in_batch = shape
+
+    if attention_mask is not None:
+        sequence_lengths = sub_attention_mask.sum(dim=1).to(torch.int).tolist()
+    else:
+        sequence_lengths = [max_features_in_batch] * batch_size
+    
+    print(sequence_lengths)
+    
+    all_span_mask = []
+    for length in sequence_lengths:
+
+        # mask with max feature len in batch
+        span_mask = torch.zeros(max_features_in_batch)
+
+        # select all values that less than mask_prob, rand generate number between 0 to 1 in uniform distribution
+        # nonzero tells all the idx where nonzero exist
+        mask_idx = (torch.rand(length) <= mask_prob).nonzero()
+
+        # we need to mask the 10 number adjecent numbers of selected mask idx
+        span_range = torch.arange(mask_length)
+        mask = (mask_idx + span_range).flatten()
+
+        # while adding mask to adjecent, there is a chance the number
+        # will go over than sequence length so trim it
+        mask = mask[mask <= length - 1]
+        span_mask[mask] = 1
+        all_span_mask.append(span_mask)
+    
+    return torch.stack(all_span_mask, dim=0)
+
+
 
     
 
@@ -175,13 +205,8 @@ if __name__ == "__main__":
 
     compute_span_masking(
         shape=sub_attention_mask.shape,
-        attention_mask=attention_mask
+        sub_attention_mask=sub_attention_mask
     )
-
-    
-
-
-
 
 
 
