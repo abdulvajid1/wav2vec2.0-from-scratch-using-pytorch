@@ -159,8 +159,6 @@ def compute_span_masking(
     else:
         sequence_lengths = [max_features_in_batch] * batch_size
     
-    print(sequence_lengths)
-    
     all_span_mask = []
     for length in sequence_lengths:
 
@@ -184,6 +182,53 @@ def compute_span_masking(
     return torch.stack(all_span_mask, dim=0)
 
 
+def sample_negative_indices(feature_shape, num_negatives, mask_time_indices):
+
+    batch_size, max_features_len = feature_shape
+
+    sample_negatives = torch.zeros(
+        (batch_size, max_features_len, num_negatives),
+        dtype=torch.long
+    )
+
+    positive_samples = (
+        torch.arange(max_features_len)
+        .unsqueeze(1)
+        .expand(max_features_len, num_negatives)
+    )
+
+    for batch in range(batch_size):
+
+        masked_idx = mask_time_indices[batch].nonzero(as_tuple=True)[0]
+
+        num_masked = len(masked_idx)
+
+        indices_sample = torch.randint(
+            low=0,
+            high=num_masked - 1,
+            size=(num_masked, num_negatives)
+        )
+
+        negative_sampled = masked_idx[indices_sample]
+
+        # Avoid selecting the positive feature
+        positive_mask = (
+            positive_samples[masked_idx] == negative_sampled
+        )
+
+        negative_sampled[positive_mask] += 1
+
+        sample_negatives[batch][masked_idx] = negative_sampled
+
+        # IMPORTANT: account for batch when flattening
+        sample_negatives[batch] += batch * max_features_len
+
+    return sample_negatives.reshape(
+        batch_size * max_features_len,
+        num_negatives
+    )
+
+
 
     
 
@@ -196,17 +241,21 @@ if __name__ == "__main__":
     attention_mask = torch.nn.utils.rnn.pad_sequence(attention_mask, batch_first=True) # shape: (2, 15000)
     
     config = Wav2Vec2Config()
-    # encoded lenght
     encoded_length = compute_encoded_length(sampling_length, config.conv_kernels, config.conv_strides)
-    print(f"{GREEN}Encoded Length: {encoded_length}{RESET}")
-
     sub_attention_mask = compute_sub_attention_mask(config, attention_mask)
-    print(f"{GREEN}Sub Attention Mask: {sub_attention_mask}{RESET}")
 
-    compute_span_masking(
+    span_mask = compute_span_masking(
         shape=sub_attention_mask.shape,
         sub_attention_mask=sub_attention_mask
     )
+
+    negative_idx = sample_negative_indices(
+        feature_shape=sub_attention_mask.shape, 
+        num_negatives=5, 
+        mask_time_indices=span_mask
+    )
+
+    print(negative_idx)
 
 
 
