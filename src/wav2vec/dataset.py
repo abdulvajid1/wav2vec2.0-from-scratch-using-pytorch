@@ -1,4 +1,9 @@
-from utils import (
+import os
+import pandas as pd
+import torchaudio
+import torch
+
+from .utils import (
     compute_span_masking,
     sample_negative_indices,
     compute_sub_attention_mask,
@@ -6,16 +11,13 @@ from utils import (
 )
 
 from transformers import Wav2Vec2CTCTokenizer
-
 from torch.utils.data import Dataset, DataLoader
-
-
 
 class LibriSpeechDataset(Dataset):
     def __init__(
         self,
-        path_to_data_root,
-        include_split=['dev'],
+        path_to_data_root='./dataset',
+        include_splits=['dev'],
         max_audio_duration=20.0,
         min_audio_duration=2.0,
         sampling_rate=160000,
@@ -25,21 +27,111 @@ class LibriSpeechDataset(Dataset):
         hf_model_name="facebook/wav2vec2-base"
     ):
 
-        if isinstance(include_split, str):
-            include_split = [include_split]
+        if isinstance(include_splits, str):
+            include_splits = [include_splits]
 
         self.sampling_rate = sampling_rate
         self.return_transcript = return_transcript
         self.truncate_audio = truncate_audio
-        self.audio
-        
+        self.num_audio_channels = num_audio_channels
+        self.min_audio_samples = (min_audio_duration * sampling_rate)        
+        self.max_audio_samples = (max_audio_duration * sampling_rate)
+        self.librespeechdata = []
+        for split in include_splits:
+            path_to_split = os.path.join(path_to_data_root, split)
+            
+            for speaker in os.listdir(path_to_split):
+                path_to_speaker = os.path.join(path_to_split, speaker)
+                
+                for section in os.listdir(path_to_speaker):
+                    path_to_section = os.path.join(path_to_speaker, section)
+                    
+                    files = os.listdir(path_to_section)
+                    # there will be a single file which have all the transcript of files
+                    transcript_file = [path for path in files if ".txt" in path][0]
+                    transcript_file = os.path.join(path_to_section, transcript_file)
+                    
+                    audio_durations = pd.read_csv(os.path.join(path_to_section, "audio_durations.csv"))
+                    audio_durations_dict = audio_durations.set_index("root")["durations"].to_dict()
+                    
+                    with open(transcript_file, "r") as f:
+                        transcripts = f.readlines()
+                    
+                    for i in transcripts:
+                        i = i.split(' ', maxsplit=1)
+                        audio_root = i[0]
+                        audio_file = audio_root + ".flac"
+                        audio_transcript = i[1].strip()    
+                        path_to_audio_file = os.path.join(path_to_section, audio_file)
+                        duration = audio_durations_dict[audio_root]
+                        
+                        if (duration >= min_audio_duration and duration <= max_audio_duration or self.truncate_audio):
+                            self.librespeechdata.append((path_to_audio_file, audio_transcript))
 
 
-
-
+        if return_transcript:
+            self.tokenizer = Wav2Vec2CTCTokenizer.from_pretrained(hf_model_name)
+            
 
     def __len__(self):
-        pass
+        return len(self.librespeechdata)
 
-    def __getitem__(self):
-        pass
+    def __getitem__(self, idx):
+        path_to_audio, transcript = self.librespeechdata[idx]
+        audio, sr = torchaudio.load(path_to_audio)
+        
+        if self.truncate_audio:
+            audio = audio[:, :self.max_audio_samples]
+
+        # sanity check for sampling rate
+        if sr != self.sampling_rate:
+            audio = torchaudio.functional.resample(audio, orig_freq=sr, new_freq=self.sampling_rate)
+        
+        # audio channels should be 1
+        if self.num_audio_channels == 2:
+            audio = audio.squeeze()
+        
+        # normalize 
+        audio = (audio - audio.mean()) / (audio.std() + 1e-7)
+        
+        if self.return_transcript:
+            tokenized_transcript = torch.tensor(self.tokenizer.encode(transcript))
+            
+            batch = {
+                "input_values" : audio,
+                "labels" : tokenized_transcript
+            }
+        
+        else:
+            batch = {
+                "input_values" : audio
+            }
+            
+
+
+
+def Wav2Vec2CollateFunctionForPretraining(batch: list):
+    
+    def collate_fun(batch: list):
+        batch_audios = [sample['input_values'] for sample in batch]
+        attention_mask = [torch.ones(len(audio)) for audio in batch_audios]
+        batch_audios = torch.nn.utils.rnn.pad_sequence(batch_audios, batch_first=True, padding_value=0.0)
+        attention_mask = torch.nn.utils.rnn.pad_sequence(attention_mask, batch_first=True, padding_value=0.0)
+        
+        
+        
+        
+        
+    return collate_fun
+    
+    
+
+
+
+if __name__ == "__main__":
+    config = Wav2Vec2Config()
+    dataset = LibriSpeechDataset(include_splits="dev")
+    dataloader = DataLoader(dataset, batch_size=4, collate_fn=Wav2Vec2CollateFunctionForPretraining(config))
+    
+    sample = next(iter(dataloader))
+    print(sample) 
