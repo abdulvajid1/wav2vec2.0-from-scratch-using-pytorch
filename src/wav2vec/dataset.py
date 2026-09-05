@@ -107,20 +107,44 @@ class LibriSpeechDataset(Dataset):
                 "input_values" : audio
             }
             
+        return batch
+            
 
 
 
-def Wav2Vec2CollateFunctionForPretraining(batch: list):
+def Wav2Vec2CollateFunctionForPretraining(config: Wav2Vec2Config):
     
-    def collate_fun(batch: list):
-        batch_audios = [sample['input_values'] for sample in batch]
+    def collate_fun(batch):
+        batch_audios = [sample['inupt_values'] for sample in batch]
         attention_mask = [torch.ones(len(audio)) for audio in batch_audios]
         batch_audios = torch.nn.utils.rnn.pad_sequence(batch_audios, batch_first=True, padding_value=0.0)
         attention_mask = torch.nn.utils.rnn.pad_sequence(attention_mask, batch_first=True, padding_value=0.0)
         
+        sub_attention_mask = compute_sub_attention_mask(config, attention_mask)
         
+        span_mask = compute_span_masking(
+            shape=sub_attention_mask.shape,
+            mask_prob=config.masking_probability,
+            mask_length=config.masking_span_length,
+            min_masks=config.minimum_spans,
+            sub_attention_mask=sub_attention_mask
+        )
         
+        sampled_negatives = sample_negative_indices(
+            feature_shape=sub_attention_mask.shape,
+            num_negatives=config.num_negatives,
+            mask_time_indices=span_mask
+        )
         
+        batch = {
+            "input_values": batch_audios,
+            "attention_mask": attention_mask,
+            "sub_attention_mask": sub_attention_mask,
+            "mask_time_indices": span_mask,
+            "sampled_negatives": sampled_negatives
+        }
+        
+        return batch
         
     return collate_fun
     

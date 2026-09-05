@@ -150,7 +150,20 @@ def compute_span_masking(
     sub_attention_mask=None,
     p_replace=0.8 
     ):
-    """Mask a set of encoded features and it's adjecent features, which we later try to predict as a form of pretraining
+    """Main pretraining mask, mask some audio encoded features and it's adjecent n number of features
+       which then used to predict this masked tokens with all sarrounding features like bert,
+       we mask random tokens to make model predict using all other tokens which is the context
+       
+       Args: 
+            shape: shape of the audio encoded features to get batch and sequence length
+            mask_lenght: num of adjecent features of selected feature to mask (audio features very correlated and overlapped 
+                         so masking and then predicting one feature at a timestep will be too easy, since two adjecent feature
+                         may not have have much change or more information like word token have, it's importent to mask
+                         some n number of adjecent featuresz)
+            min_masks: 
+            sub_attention_mask:
+            p_replace:
+            
     """
     batch_size, max_features_in_batch = shape
 
